@@ -1,8 +1,8 @@
 # CoD 8s skill-rating overhaul
 
-Local implementation and evaluation: [Rating v2 design, audit, and migration](docs/RATING_V2.md), [validation results](docs/VALIDATION.md).
+Implementation and evaluation: [Skill rating design, audit, and migration](docs/RATING_V2.md), [validation results](docs/VALIDATION.md).
 
-Enable only after a reviewed new-season migration. Default operation remains legacy. Source changes do not authorize or trigger a production deployment.
+Skill ratings replace the old accumulated SR system by default. There is no production legacy-mode switch. Provision the required rating table and review the migration before deploying; both deployment workflows validate the table before changing Lambda. Rollback means restoring the previous release, with legacy data retained for that purpose.
 
 # Discord Lambda Py
 A template for Discord bot creation using AWS Lambda and API Gateway. This project attempts to offer similar functionality as the [`slash-create`](https://github.com/Snazzah/slash-create) JavaScript library but in a serverless, Python environment.

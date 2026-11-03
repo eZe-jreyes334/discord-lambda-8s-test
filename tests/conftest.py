@@ -5,6 +5,12 @@ from unittest.mock import MagicMock, patch
 import sys
 from types import ModuleType
 
+# Historical reference/regression suite: isolate the old formulas and mocked
+# paths without making legacy mode selectable in the application. The separate
+# tests_rating process exercises the real production default and DynamoDB writes.
+import rating
+rating.enabled = lambda: False
+
 # Mock trueskill and more_itertools before any project imports
 trueskill_mock = ModuleType('trueskill')
 trueskill_mock.TrueSkill = MagicMock()

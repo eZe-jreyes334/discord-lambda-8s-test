@@ -1,7 +1,8 @@
 """Versioned snapshots and permanent result receipts, committed atomically.
 
-The table is deliberately opt-in. No table creation, credentials, or migration
-is performed at import/startup. All legacy player/team rating fields stay intact.
+The dedicated rating table is required. Missing configuration never falls back
+to legacy SR. No infrastructure or migration is created at import/startup.
+Legacy player/team fields remain archival data for a previous-release rollback.
 """
 import hashlib
 import json
@@ -28,7 +29,7 @@ class RatingDao:
         self.table_name = table_name or os.environ.get("RATING_TABLE")
         self.season = season or os.environ.get("RATING_SEASON", "v2-1")
         if not self.table_name:
-            raise ValueError("Set RATING_TABLE before enabling RATING_SYSTEM=v2")
+            raise ValueError("RATING_TABLE is required for skill ratings; configure the table before deployment. Legacy SR fallback is disabled.")
         if not self.season or len(self.season)>64 or "#" in self.season:
             raise ValueError("RATING_SEASON must be 1-64 characters without #")
         # Match the existing queue/team DAOs: all transaction tables share a region.

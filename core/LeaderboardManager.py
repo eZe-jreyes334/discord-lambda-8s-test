@@ -82,7 +82,7 @@ def build_leaderboard_page(guild_id: str, page: int):
         if entry.get("status"):
             rows[-1] += f"\n  {entry['status']} | Skill {entry['mu']:.1f} ± {entry['sigma']:.1f}"
 
-    empty = "No v2 matches completed yet. Keep playing!" if rating_v2_enabled() else "No players with 10+ games yet. Keep playing!"
+    empty = "No matches completed this season yet. Keep playing!" if rating_v2_enabled() else "No players with 10+ games yet. Keep playing!"
     description = "\n".join(rows) if rows else empty
 
     embed = Embedding(

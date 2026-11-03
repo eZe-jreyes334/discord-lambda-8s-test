@@ -6,7 +6,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate_rating_storage:
+    name: Validate required rating storage
+    environment: PROD
+    if: github.repository != 'jaARke/discord-lambda-py'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Check rating table before deployment
+        env:
+          RATING_TABLE: ${{ vars.RATING_TABLE }}
+        run: |
+          if [ -z "$RATING_TABLE" ]; then
+            echo "::error::RATING_TABLE is required. Provision the skill rating table and configure this environment before deploying."
+            exit 1
+          fi
+          aws dynamodb describe-table --table-name "$RATING_TABLE" --output json > rating-table.json
+          python -m tools.validate_rating_storage rating-table.json
+
   upload_deps:
+    needs: validate_rating_storage
     environment: PROD
     if: github.repository != 'jaARke/discord-lambda-py'
     name: Upload Dependencies
@@ -68,6 +93,7 @@ jobs:
           aws lambda update-function-configuration --function-name $function_name --layers $layer_arn
   
   upload_source:
+    needs: [validate_rating_storage, upload_deps]
     environment: PROD
     if: github.repository != 'jaARke/discord-lambda-py'
     name: Upload Source
@@ -96,7 +122,6 @@ jobs:
             BOT_TOKEN=${{ secrets.BOT_TOKEN }},
             BOT_ENV=${{ secrets.BOT_ENV }},
             VENMO_TOKEN=${{ secrets.VENMO_TOKEN }},
-            RATING_SYSTEM=${{ vars.RATING_SYSTEM || 'legacy' }},
             RATING_TABLE=${{ vars.RATING_TABLE }},
             RATING_SEASON=${{ vars.RATING_SEASON || 'v2-1' }}
             # Add your environment variables below in the same format as above

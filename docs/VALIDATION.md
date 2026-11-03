@@ -1,7 +1,7 @@
 # Validation record: CoD 8s rating overhaul
 
 Recorded November 3, 2026. Source fork snapshot: `8715e2c8af661cc6469f3343a186b01a8b2c93a4`.
-This validation was completed locally before repository publication. No production data was read or live Discord/AWS calls made during the tests.
+The simulation evidence and baseline checks below were completed locally before repository publication. The default-system revision adds 10 checks and is configured for GitHub Actions verification on Python 3.9 and 3.12. No production data was read or live Discord/AWS calls made during the tests.
 
 ## Result and interpretation
 
@@ -93,14 +93,15 @@ The strong occasional player qualifies and ranks above the average grinder in **
 | Check | Result |
 |---|---|
 | Untouched fork baseline tests | 157 passed |
-| Final legacy/regression suite, including upstream #84/#85 | 176 passed |
-| Real-math and emulated-transaction suite | 54 passed |
+| Historical/regression baseline, including upstream #84/#85 | 176 passed locally before the default-system revision |
+| Real-math and emulated-transaction baseline | 54 passed locally before the default-system revision |
 | Python 3.9 syntax parse | 28 files passed |
 | Optimized rank calculation versus reference | 500 tied/random cases matched |
 | Git whitespace/error check | Passed |
-| Remote GitHub Actions / real Lambda / real Discord | Not run |
+| Revised suites on GitHub Actions | Pending this revision's push run |
+| Real Lambda / real Discord | Not run |
 
-Local runtime: Python 3.12.14. The new suite uses real TrueSkill, boto3 and Moto with fake credentials; it does not connect to live AWS. The inherited suite globally replaces libraries, so the suites run in separate Python processes. Dependency deprecation warnings remain (primarily botocore's utcnow calls); no test failed or was skipped. CI is configured for Python 3.9 and 3.12, but local syntax parsing is not a substitute for running the Python 3.9 CI job.
+Local runtime: Python 3.12.14. The new suite uses real TrueSkill, boto3 and Moto with fake credentials; it does not connect to live AWS. The inherited historical suite globally replaces libraries and selects historical reference paths inside its test harness; it is not a production mode. The production-default suite runs without RATING_SYSTEM, in a separate Python process. Dependency deprecation warnings remain (primarily botocore's utcnow calls); no test failed or was skipped. CI is configured for Python 3.9 and 3.12, but local syntax parsing is not a substitute for running the Python 3.9 CI job.
 
 Coverage includes one-step equivalence to TrueSkill moments, fixed-teammate uncertainty, covariance positivity, extreme upsets, opponent-strength sensitivity, no read-time decay or game-count bonus, provisional/qualification behavior, rank boundaries, result replay, stale buttons, invalid/duplicate rosters, opposite outcomes, concurrent snapshot/queue updates, lost responses, guild isolation, immutable legacy rating fields, premade reservations/cancellation, separate team ratings, participant-only bracket recovery, failed Discord delivery, pagination, and displayed v2 stats.
 
@@ -108,7 +109,7 @@ Coverage includes one-step equivalence to TrueSkill moments, fixed-teammate unce
 
 | Files | Purpose |
 |---|---|
-| rating/model.py, rating/__init__.py | Gaussian team model, public scores, confidence, team balancing, explicit mode switch |
+| rating/model.py, rating/__init__.py | Required Gaussian team model, public scores, confidence and team balancing; legacy mode rejected |
 | dao/RatingDao.py, core/RatingService.py | Atomic result receipts/snapshots/queue transitions and premade status changes |
 | dao/PlayerDao.py, dao/TeamDao.py, dao/QueueDao.py | Guild isolation, compatible optional fields, version guards, pagination, rating views |
 | core/QueueManager.py, core/TeamManager.py | v2 integration, match IDs, valid drafts, atomic premade reservations, consistent displays |
@@ -117,12 +118,13 @@ Coverage includes one-step equivalence to TrueSkill moments, fixed-teammate unce
 | trueskillapi/__init__.py | Fail closed if the legacy update path is invoked in v2 |
 | tools/benchmark_ratings.py, tools/stress_ratings.py, tools/replay_ratings.py | Reproducible comparisons, participation tests, offline chronological replay |
 | tests_rating/ | Independent real-library/emulated-storage regression coverage |
-| requirements*.txt, .github/workflows/test.yml, .env_sample | Pinned comparison/testing dependencies, separate suites, opt-in configuration |
+| requirements*.txt, .github/workflows/, .env_sample | Pinned comparison/testing dependencies, separate suites, required-table deployment check |
+| tools/validate_rating_storage.py, tests_rating/test_default_system.py | Validate table status/schema and required default without a legacy fallback |
 | README.md, CLAUDE.md, ELO_SYSTEM_IMPROVEMENTS.md, docs/ | Audit, formulas, limitations, numerical evidence, migration and rollback |
 
 ## Reproduction and rollout
 
-See [RATING_V2.md](RATING_V2.md) for formulas, cited research, the full migration/rollback procedure, and operator configuration. The code defaults to legacy mode. Enabling the new model requires a separate rating table and an explicit reviewed season; deployment alone does not activate it.
+See [RATING_V2.md](RATING_V2.md) for formulas, cited research, the full migration/rollback procedure, and operator configuration. The skill model replaces old SR by default and is the only production path. Provision the required rating table before deployment; both workflows validate its schema and status first. Legacy mode cannot be selected, and rollback requires the previous application release.
 
 For faster benchmark execution, append `--workers 4` to the documented commands. The benchmark saves one row after every completed model/schedule run. With unchanged source and protocol, add `--resume` and reuse the output path to continue after interruption. Checkpoints are ignored by Git; final JSON contains every raw row. Do not resume across numerical code changes.
 

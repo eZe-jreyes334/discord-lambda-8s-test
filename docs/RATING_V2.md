@@ -1,4 +1,4 @@
-# CoD 8s rating v2
+# CoD 8s skill rating replacement
 
 Source audited: `eZe-jreyes334/discord-lambda-8s-test`, GitHub commit
 `8715e2c8af661cc6469f3343a186b01a8b2c93a4` (November 3, 2026).
@@ -7,7 +7,8 @@ Before opening the upstream PR, integrated Kumar's current master at
 (queue/result-channel repairs, numeric normalization, and map-host assignments).
 Development and validation used a local source snapshot. No production database,
 credentials, or historical match results were accessed during that work.
-Repository publication does not activate v2; see the rollout procedure below.
+Deploying this release uses the new SR system. Complete the migration steps below
+before deploying; repository publication alone is not a live deployment.
 
 ## Decision
 
@@ -24,17 +25,24 @@ its members is better. This model preserves uncertainty in those unresolved
 directions. It does not penalize someone simply for having regular teammates.
 
 Public SR is a linear display of posterior mean ability. Confidence is shown
-separately, and players qualify after **20 v2 matches and sigma <= 6**. These
+separately, and players qualify after **20 matches in the new season and sigma <= 6**. These
 qualification thresholds are deliberate product choices, not universal statistical
 constants. Ten forced wins against established opponents still produced high
 estimated ability in testing, so a ten-game qualification rule was rejected.
 Twenty wins can also be lucky: no outcome-only model can certify talent or
 detect collusion from the same observations that would indicate genuine skill.
 
-The new mode is explicitly enabled with `RATING_SYSTEM=v2`. The default remains
-`legacy` to avoid silently resetting a live community without a migration decision.
-Legacy mode retains the old inflation/decay rules for rollback; it does not gain
-the new transaction guarantees. Deploying code alone is not enabling the overhaul.
+The skill model is the **only production rating system**, active without an opt-in
+flag. `RATING_SYSTEM=legacy` is rejected instead of selecting old SR. The former
+`v2` value is accepted only for configuration compatibility; it selects the same
+required skill model. The internal schema version and existing snapshot keys stay
+unchanged, so this default change does not discard a previously created snapshot.
+
+The dedicated `RATING_TABLE` is required. Both deployment workflows validate its
+existence, ACTIVE status, and String partition/sort keys before changing Lambda
+dependencies or source. Missing runtime configuration fails explicitly and never
+falls back to accumulated SR. Old rating fields are archival data for restoring a
+previous application release, not a second selectable leaderboard.
 
 ## Confirmed audit findings
 
@@ -174,10 +182,10 @@ moderation, and accurate result reporting remain important. Repeated easy wins
 produce diminishing evidence, but even an ideal outcome model cannot distinguish
 deliberate loss trading from genuine surprise wins using outcomes alone.
 
-## Storage, activation, migration and rollback
+## Storage, migration, deployment and rollback
 
-1. Use a **test environment first**. Finish/cancel active lobbies before switching
-   modes. Old buttons lack a match UUID and are intentionally rejected in v2.
+1. Use a **test environment first**. Finish/cancel active lobbies before deploying
+   the replacement. Old buttons lack a match UUID and are intentionally rejected.
 2. Provision a dedicated DynamoDB table in `us-east-1` (the region used by the
    existing queue/team DAOs), in the same account as those tables,
    partition key `guild_id` (String), sort key `record_id` (String),
@@ -190,11 +198,14 @@ deliberate loss trading from genuine surprise wins using outcomes alone.
    operations through these underlying actions, not a `TransactWriteItems` IAM
    action. Scope permissions to the actual table ARNs. Existing leaderboard
    queries and other bot permissions still apply.
-4. Set `RATING_SYSTEM=v2`, `RATING_TABLE=<dedicated table>`, and a reviewed
+4. Set `RATING_TABLE=<dedicated table>` and a reviewed
    `RATING_SEASON` such as `v2-1` as GitHub environment variables in DEV/PROD.
    Both Lambda workflows now pass these variables into their explicit environment
-   maps, defaulting to legacy mode and season `v2-1`. Configure the table and IAM
-   before enabling v2. A repository merge alone does not provision either resource.
+   maps. There is no mode switch. Remove any old `RATING_SYSTEM=legacy` application
+   setting. The deployment check reads the table's schema before either upload job
+   runs; source deployment also waits for dependency deployment. Configure the
+   Lambda role's permissions separately: the table check does not prove the runtime
+   role has all permissions. A merge does not provision the table or IAM policy.
 5. With no trustworthy history, start all v2 players from the same prior. Legacy
    `sr`, `elo`, `sigma`, wins/losses and championships are left intact. v2 games,
    wins, uncertainty, streaks and latest match deltas live in the snapshot.
@@ -212,8 +223,9 @@ deliberate loss trading from genuine surprise wins using outcomes alone.
    together. Loading an unsupported/corrupt snapshot fails closed; it never resets
    players silently. Runtime default changes do not reinterpret existing states.
    A 64-entity limit bounds item sizes; this implementation targets small pools.
-8. Rollback: stop accepting results, restore a reviewed snapshot if necessary,
-   and switch `RATING_SYSTEM=legacy`. All original rating values remain available,
+8. Rollback: stop accepting results, restore the reviewed previous application
+   release and its deployment configuration, and restore data if necessary.
+   A mode flag cannot reactivate old SR in this release. Original values remain available,
    but results recorded only in v2 are not automatically backfilled into legacy
    SR. Keep receipts/snapshots for a later replay. Merely changing season cannot
    rate an old match twice because receipt keys are independent of the season.
@@ -253,12 +265,14 @@ python -m tools.stress_ratings
 python -m tools.replay_ratings --input authorized-results.jsonl --output reviewed-new-season.json --guild YOUR_GUILD_ID --season reviewed-v2
 ```
 
-Run the two test suites in **separate processes**. The inherited legacy conftest
-replaces third-party modules globally; combining suites would contaminate the
-real-library tests. The new suite uses real boto3 with Moto, fake AWS credentials,
+Run the two test suites in **separate processes**. The inherited historical conftest
+replaces third-party modules and explicitly selects historical reference paths
+inside its test process; it does not enable a production legacy mode. Combining
+suites would contaminate the real-library tests. The production-default suite runs
+without `RATING_SYSTEM` and uses real boto3 with Moto, fake AWS credentials,
 real TrueSkill for one-step moment equivalence, and NumPy only for a covariance
 eigenvalue check. CI is configured for Python 3.9 and 3.12; local execution used
-Python 3.12.14, with a Python 3.9 syntax parse check. CI has not been run remotely.
+Python 3.12.14, with a Python 3.9 syntax parse check. The revised branch is configured to run both CI jobs on push.
 OpenSkill is an evaluation-only dependency requiring Python 3.10+; it is excluded
 from Lambda dependencies and from the Python 3.9 test dependency set.
 

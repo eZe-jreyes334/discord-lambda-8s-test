@@ -5,7 +5,7 @@ for key in ('AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN'):
     os.environ[key]='testing'
 os.environ['AWS_EC2_METADATA_DISABLED']='true'
 os.environ['AWS_DEFAULT_REGION']='us-east-1'
-os.environ['RATING_SYSTEM']='v2'
+os.environ.pop('RATING_SYSTEM',None)
 os.environ['RATING_TABLE']='RatingTest'
 os.environ['BOT_ENV']='TEST'
 
@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture
 def database(monkeypatch):
-    monkeypatch.setenv('RATING_SYSTEM','v2')
+    monkeypatch.delenv('RATING_SYSTEM',raising=False)
     monkeypatch.setenv('RATING_TABLE','RatingTest')
     with mock_aws():
         client=boto3.client('dynamodb',region_name='us-east-1')

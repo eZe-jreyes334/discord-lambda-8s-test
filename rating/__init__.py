@@ -1,9 +1,17 @@
-"""Outcome-only rating v2; no AWS or Discord dependencies in the model."""
+"""The skill model replaces accumulated SR for all production rating paths."""
 import os
 
 
 def enabled():
-    mode = os.environ.get("RATING_SYSTEM", "legacy")
-    if mode not in ("legacy", "v2"):
-        raise ValueError("RATING_SYSTEM must be legacy or v2")
-    return mode == "v2"
+    """Compatibility entry point, not a selectable feature flag.
+
+    Old v2 configuration is accepted so an existing skill snapshot keeps working.
+    Legacy formulas remain as historical reference code but cannot be selected
+    at runtime. Rollback requires restoring the previous application release.
+    """
+    if os.environ.get("RATING_SYSTEM") not in (None, "", "v2"):
+        raise ValueError(
+            "Legacy SR has been replaced. Remove RATING_SYSTEM; "
+            "the skill rating system is required. Rollback requires the previous release."
+        )
+    return True
