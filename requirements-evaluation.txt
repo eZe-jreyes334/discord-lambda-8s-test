@@ -1,0 +1,3 @@
+-r requirements-testing.txt
+# OpenSkill 6.1.3 requires Python 3.10+. It is not a Lambda dependency.
+openskill==6.1.3

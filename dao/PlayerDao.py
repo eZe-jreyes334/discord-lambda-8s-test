@@ -11,7 +11,9 @@ from boto3.dynamodb.conditions import Attr
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from dao import DecimalEncoder
+from dao import DecimalEncoder,set_default
+from rating import enabled as rating_v2_enabled
+from rating.model import rank_for_sr
 
 table_name = "PlayerTable"
 
@@ -38,7 +40,7 @@ RANK_SR_RANGES = {
   4: (400, 499),
   5: (500, 599),
   6: (600, 699),
-  7: (700, 800),
+  7: (700, float("inf")),
 }
 
 
@@ -65,23 +67,26 @@ class PlayerRecord:
 
 
   def get_streak(self):
-    print("Streak for player_name: " + self.player_name + " , streak: " + str(self.streak))
-    if self.streak == 2:
+    streak = self.rating_v2["streak"] if hasattr(self,"rating_v2") else self.streak
+    print("Streak for player_name: " + self.player_name + " , streak: " + str(streak))
+    if streak == 2:
       return ":fire:"
-    elif self.streak == 3:
+    elif streak == 3:
       return "<a:blue_flame:1299111622807130132>"
-    elif self.streak >= 4:
+    elif streak >= 4:
       return "<a:2788demonshit:1299111278572470423>"
-    elif self.streak == -2:
+    elif streak == -2:
       return ":monkey:"
-    elif self.streak == -3:
+    elif streak == -3:
       return "<:shitter:1299107333095297116>"
-    elif self.streak <= -4:
+    elif streak <= -4:
       return "<a:spin_poop:1299111996964470805>"
 
     return ""
 
   def get_rating(self):
+      if hasattr(self, "rating_v2"):
+          return self.rating_v2["mu"]
       rating = float(self.elo - (2 * self.sigma))
       print(f"ELO: {self.elo}, Sigma: {self.sigma}, Rating: {rating}")
       return rating
@@ -94,6 +99,8 @@ class PlayerRecord:
       return today == forgiven_date
 
   def get_effective_sr(self, grace_days: int = 7, decay_rate: int = 10) -> float:
+      if hasattr(self, "rating_v2"):
+          return self.rating_v2["sr"]
       if self.last_played == 0:
           return float(self.sr)
       days_inactive = (int(time.time()) - self.last_played) / 86400
@@ -109,27 +116,31 @@ class PlayerRecord:
     return max(RANK_ELO_RANGES.keys())
 
   def calculate_sr_rank(self, calc_sr):
-    for rank, (min_sr, max_sr) in RANK_SR_RANGES.items():
-      if min_sr <= calc_sr <= max_sr:
-        return rank
-    return max(RANK_SR_RANGES.keys())
+    return rank_for_sr(calc_sr)
+
+  def get_public_delta(self):
+      if hasattr(self, "rating_v2"):
+          return f'{self.rating_v2["delta"]:+d}'
+      return self.delta
 
   def get_rank_emoji(self):
-      if self.mw + self.ml <= 9:
+      view = getattr(self, "rating_v2", None)
+      if (view is not None and not view["eligible"]) or (view is None and self.mw + self.ml <= 9):
           return "<:recruit:1367977165618024491>"
-      if self.rank == 0:
+      rank = view["rank"] if view is not None else self.rank
+      if rank == 0:
         return "<:Bronze:1367281599250563216>" 
-      elif self.rank == 1:
+      elif rank == 1:
         return "<:Silver:1367281173340094505>"
-      elif self.rank == 2:
+      elif rank == 2:
         return "<:Gold:1367281171729354812>"
-      elif self.rank == 3:
+      elif rank == 3:
         return "<:Diamond:1367281170613801101>"
-      elif self.rank == 4:
+      elif rank == 4:
         return "<:GrandMaster:1367282959870328842>"
-      elif self.rank == 5:
+      elif rank == 5:
         return "<:Celestial:1367281169137275090>"
-      elif self.rank == 6:
+      elif rank == 6:
         return "<:Eternity:1367281167954477158>"
       else: 
         return "<:OneAboveAll:1367281598143266949>"
@@ -148,6 +159,8 @@ class PlayerRecord:
       return loss
 
   def apply_rp_change(self, loss, expected=0.5):
+      if rating_v2_enabled():
+          raise RuntimeError("Accumulated RP is disabled in rating v2")
       print(f"\n=== Apply RP Change: {'WIN' if loss == 0 else 'LOSS'} expected={expected:.2f} ===")
 
       # Commit accumulated decay before applying win/loss
@@ -195,9 +208,8 @@ class PlayerDao:
     self.table = dynamodb.Table(table_name)
 
   def get_player(self, guild_id: str, player_id: str):
-    if guild_id != "1123491132765110302":
-      guild_id = "1123491132765110302"
     response = self.table.get_item(
+      ConsistentRead=True,
       Key={
         'player_id': player_id,
         'guild_id': guild_id,
@@ -208,14 +220,19 @@ class PlayerDao:
     if 'Item' not in response:
       return None
 
-    return self.get_player_record_attributes(response["Item"])
+    player = self.get_player_record_attributes(response["Item"])
+    if rating_v2_enabled():
+      from dao.RatingDao import RatingDao
+      state, _ = RatingDao().load(guild_id)
+      player.rating_v2 = state.summary(player_id, int(time.time()))
+    return player
 
   def put_player(self, player_record: PlayerRecord):
-    if player_record.guild_id != "1123491132765110302":
-       player_record.guild_id = "1123491132765110302"
     current_version = int(player_record.version)
-    player_record.version = int(player_record.version) + 1
-    json_ = json.dumps(player_record.__dict__, cls=DecimalEncoder)
+    item = dict(getattr(player_record,'_extra_fields',{}))
+    item.update({k:v for k,v in player_record.__dict__.items() if k not in ("rating_v2","_extra_fields")})
+    item["version"] = current_version + 1
+    json_ = json.dumps(item, default=set_default)
     print(f'Putting following player_record: {json_}')
     player_dict = json.loads(json_, parse_float=Decimal)
 
@@ -224,7 +241,7 @@ class PlayerDao:
       if current_version != 0:
         response = self.table.put_item(Item=player_dict, ConditionExpression=Attr("version").eq(current_version))
       else:
-        response = self.table.put_item(Item=player_dict)
+        response = self.table.put_item(Item=player_dict, ConditionExpression=Attr("player_id").not_exists())
     except ClientError as err:
       if err.response["Error"]["Code"] == 'ConditionalCheckFailedException':
         # Somebody changed the item in the db while we were changing it!
@@ -233,12 +250,11 @@ class PlayerDao:
       else:
         raise err
 
+    player_record.version = current_version + 1
     print(f'PlayerDao put_player response: {response}')
     return response
 
   def get_players_by_guild_id(self, guild_id: str) -> list[PlayerRecord]:
-      if guild_id != "1123491132765110302":
-        guild_id = "1123491132765110302"
       response = self.table.query(
         IndexName='guild_id-index',
         KeyConditionExpression=Key('guild_id').eq(guild_id)
@@ -248,6 +264,15 @@ class PlayerDao:
       player_list = list()
       for player in response['Items']:
         player_list.append(self.get_player_record_attributes(player))
+      while response.get("LastEvaluatedKey"):
+        response = self.table.query(IndexName='guild_id-index',
+            KeyConditionExpression=Key('guild_id').eq(guild_id),ExclusiveStartKey=response["LastEvaluatedKey"])
+        player_list.extend(self.get_player_record_attributes(p) for p in response['Items'])
+      if rating_v2_enabled():
+        from dao.RatingDao import RatingDao
+        state, _ = RatingDao().load(guild_id)
+        for player in player_list:
+          player.rating_v2 = state.summary(player.player_id, int(time.time()))
       return player_list
 
   def get_player_record_attributes(self, response):
@@ -258,11 +283,17 @@ class PlayerDao:
       rank = 0
       if response.get("rank") is not None:
         rank = int(response['rank'])
-      last_played = int(time.time())
+      last_played = 0
       if response.get("last_played") is not None:
         last_played = int(response["last_played"])
       last_loss_forgiven = 0
       if response.get("last_loss_forgiven") is not None:
         last_loss_forgiven = int(response["last_loss_forgiven"])
       championships = int(response.get("championships", 0))
-      return PlayerRecord(player_id=response["player_id"], player_name=response['player_name'], guild_id=response["guild_id"], mw=response["mw"], ml=response["ml"], sr=sr, rank=rank, elo=response["elo"], sigma=response["sigma"], delta=response["delta"], streak=response["streak"], version=response["version"], last_played=last_played, last_loss_forgiven=last_loss_forgiven, championships=championships)
+      record=PlayerRecord(player_id=response["player_id"],player_name=response.get('player_name',response['player_id']),
+          guild_id=response['guild_id'],mw=response.get('mw',0),ml=response.get('ml',0),sr=sr,rank=rank,
+          elo=response.get('elo',25),sigma=response.get('sigma',25/3),delta=response.get('delta','+0'),
+          streak=response.get('streak',0),version=response.get('version',0),last_played=last_played,
+          last_loss_forgiven=last_loss_forgiven,championships=championships)
+      record._extra_fields={k:v for k,v in response.items() if k not in record.__dict__}
+      return record

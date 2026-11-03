@@ -2,6 +2,7 @@ from dao.LeaderboardDao import LeaderboardDao
 from dao.TeamDao import TeamDao
 from discord_lambda import Components
 from discord_lambda.Interaction import Embedding
+from rating import enabled as rating_v2_enabled
 
 team_dao = TeamDao()
 leaderboard_dao = LeaderboardDao()
@@ -15,6 +16,9 @@ LEADERBOARD_COLOR = 0x7c3aed
 
 def build_team_leaderboard_entries(guild_id: str):
     teams = team_dao.get_teams_by_guild_id(guild_id)
+    if rating_v2_enabled():
+        from core.RatingViews import leaderboard_entries
+        return leaderboard_entries(guild_id,teams,"team")
     sorted_teams = sorted(teams, key=lambda t: t.team_sr, reverse=True)
 
     entries = []
@@ -54,6 +58,8 @@ def build_team_leaderboard_page(guild_id: str, page: int):
             f"{entry['medal']} {entry['rank_emoji']} **{entry['name']}**\n"
             f"└─ SR: **{entry['sr']}** ({entry['delta']}) | {entry['wins']}W / {entry['losses']}L"
         )
+        if entry.get('status'):
+            rows[-1] += f"\n  {entry['status']} | Skill {entry['mu']:.1f} ± {entry['sigma']:.1f}"
 
     description = "\n".join(rows) if rows else "No team matches completed yet. Keep playing!"
 
@@ -62,7 +68,8 @@ def build_team_leaderboard_page(guild_id: str, page: int):
         desc=description,
         color=LEADERBOARD_COLOR,
     )
-    embed.set_footer(text=f"Page {page + 1}/{total_pages}  •  Ranked after first match")
+    footer="Separate premade-team skill • No placement jump" if rating_v2_enabled() else "Ranked after first match"
+    embed.set_footer(text=f"Page {page + 1}/{total_pages} • {footer}")
 
     component = Components()
     component.add_button("◀ Previous", f"{team_leaderboard_page_custom_id}#{page - 1}", page <= 0, 2)

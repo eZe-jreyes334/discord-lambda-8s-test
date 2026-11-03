@@ -18,7 +18,7 @@ start_bracket_custom_id = "start_bracket"
 bracket_a_won_custom_id = "bracket_a_won"
 bracket_b_won_custom_id = "bracket_b_won"
 
-VOTE_THRESHOLD = 3  # 3 out of 4 per-team players (lower than solo for small teams)
+VOTE_THRESHOLD = 5  # Majority of eight; both captains can still agree.
 META_SUFFIX = "META"
 
 # ---------------------------------------------------------------------------
@@ -677,6 +677,8 @@ def cancel_bracket(inter: Interaction, queue_id: str) -> str:
 
 def report_winner(inter: Interaction, tid: str, match_id: str, side: str):
     """Handle Team A Won / Team B Won vote for a bracket match."""
+    if side not in ("A","B"):
+        return
     MAX_RETRIES = 4
     for attempt in range(MAX_RETRIES):
         match = queue_dao.get_queue_or_none(inter.guild_id, _bracket_queue_id(tid, match_id))
@@ -688,6 +690,11 @@ def report_winner(inter: Interaction, tid: str, match_id: str, side: str):
                 embeds=[Embedding(":x: Not in this match", "Only players in this match can vote.", color=0xFF0000)],
                 ephemeral=True,
             )
+            return
+
+        if match.rating_result:
+            # Participants may resume advancement without collecting new votes.
+            _on_match_decided(inter,tid,match_id,match.rating_result)
             return
 
         if side == "A":
@@ -745,6 +752,8 @@ def _on_match_decided(inter: Interaction, tid: str, match_id: str, winning_side:
             return
         # Check for idempotency: already decided by another Lambda invocation
         meta_check = _get_meta(inter.guild_id, tid)
+        if meta_check.bracket.get("status") in ("cancelled","complete"):
+            return
         node_status = meta_check.bracket["matches"].get(match_id, {}).get("status")
         if node_status == "decided":
             print(f"[Bracket] {match_id} already decided, skipping")
@@ -753,8 +762,28 @@ def _on_match_decided(inter: Interaction, tid: str, match_id: str, winning_side:
         win_team = match.team_1 if winning_side == "A" else match.team_2
         lose_team = match.team_2 if winning_side == "A" else match.team_1
 
-        # Update ELO/SR
-        ts.post_match(win_team=win_team, lose_team=lose_team, guild_id=inter.guild_id)
+        # Durable result receipt prevents rerating when bracket metadata OCC retries.
+        from rating import enabled as rating_v2_enabled
+        if rating_v2_enabled():
+            from core.RatingService import commit_result
+            from dao.RatingDao import RatingDao,RatingConflict
+            from dao.QueueDao import table_name as queue_table_name
+            store=RatingDao()
+            if match.rating_result:
+                winning_side=match.rating_result
+                win_team=match.team_1 if winning_side=="A" else match.team_2
+                lose_team=match.team_2 if winning_side=="A" else match.team_1
+            guard={"ConditionCheck":{"TableName":queue_table_name,
+                "Key":store._encode(dict(guild_id=inter.guild_id,queue_id=meta_check.queue_id)),
+                "ConditionExpression":"#v = :v",
+                "ExpressionAttributeNames":{"#v":"version"},
+                "ExpressionAttributeValues":{":v":{"N":str(meta_check.version)}}}}
+            try:
+                commit_result(match,winning_side,store=store,guard_writes=[guard])
+            except RatingConflict:
+                continue
+        else:
+            ts.post_match(win_team=win_team, lose_team=lose_team, guild_id=inter.guild_id)
 
         # Post decided embed
         meta = _get_meta(inter.guild_id, tid)

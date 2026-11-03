@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+import time
 from decimal import Decimal
 
 import boto3
@@ -12,6 +13,8 @@ from botocore.exceptions import ClientError
 
 from dao import DecimalEncoder
 from dao.PlayerDao import RANK_SR_RANGES, RANK_ELO_RANGES
+from rating import enabled as rating_v2_enabled
+from rating.model import rank_for_sr
 
 table_name = "TeamTable"
 
@@ -52,6 +55,8 @@ class TeamRecord:
     self.version = int(version)
 
   def get_rating(self):
+    if hasattr(self,"rating_v2"):
+      return self.rating_v2["mu"]
     rating = float(self.elo - (2 * self.sigma))
     print(f"[Team {self.team_name}] ELO: {self.elo}, Sigma: {self.sigma}, Rating: {rating}")
     return rating
@@ -60,7 +65,15 @@ class TeamRecord:
     return len(self.players) >= MAX_TEAM_SIZE
 
   def is_ranked(self) -> bool:
+    if hasattr(self,"rating_v2"):
+      return self.rating_v2["eligible"]
     return (self.tmw + self.tml) >= 1
+
+  def get_effective_sr(self):
+    return self.rating_v2["sr"] if hasattr(self,"rating_v2") else self.team_sr
+
+  def get_public_delta(self):
+    return f'{self.rating_v2["delta"]:+d}' if hasattr(self,"rating_v2") else self.team_delta
 
   def calculate_proj_rank(self):
     hidden_mmr = self.get_rating() * 100
@@ -70,27 +83,26 @@ class TeamRecord:
     return max(RANK_ELO_RANGES.keys())
 
   def calculate_sr_rank(self, calc_sr):
-    for rank, (min_sr, max_sr) in RANK_SR_RANGES.items():
-      if min_sr <= calc_sr <= max_sr:
-        return rank
-    return max(RANK_SR_RANGES.keys())
+    return rank_for_sr(calc_sr)
 
   def get_rank_emoji(self):
-    if self.tmw + self.tml == 0:
+    view=getattr(self,"rating_v2",None)
+    if (view is not None and not view["eligible"]) or (view is None and self.tmw + self.tml == 0):
       return "<:recruit:1367977165618024491>"
-    if self.team_rank == 0:
+    rank=view["rank"] if view is not None else self.team_rank
+    if rank == 0:
       return "<:Bronze:1367281599250563216>"
-    elif self.team_rank == 1:
+    elif rank == 1:
       return "<:Silver:1367281173340094505>"
-    elif self.team_rank == 2:
+    elif rank == 2:
       return "<:Gold:1367281171729354812>"
-    elif self.team_rank == 3:
+    elif rank == 3:
       return "<:Diamond:1367281170613801101>"
-    elif self.team_rank == 4:
+    elif rank == 4:
       return "<:GrandMaster:1367282959870328842>"
-    elif self.team_rank == 5:
+    elif rank == 5:
       return "<:Celestial:1367281169137275090>"
-    elif self.team_rank == 6:
+    elif rank == 6:
       return "<:Eternity:1367281167954477158>"
     else:
       return "<:OneAboveAll:1367281598143266949>"
@@ -106,6 +118,8 @@ class TeamRecord:
     return loss
 
   def apply_rp_change(self, loss, expected=0.5):
+    if rating_v2_enabled():
+      raise RuntimeError("Accumulated team RP is disabled in rating v2")
     print(f"\n=== Team RP Change [{self.team_name}]: {'WIN' if loss == 0 else 'LOSS'} expected={expected:.2f} ===")
     curr_sr = float(self.team_sr)
 
@@ -151,6 +165,7 @@ class TeamDao:
 
   def get_team(self, guild_id: str, team_id: str):
     response = self.table.get_item(
+      ConsistentRead=True,
       Key={
         'team_id': team_id,
         'guild_id': guild_id,
@@ -159,7 +174,12 @@ class TeamDao:
     print(f'Team Dao get_team response: {response}')
     if 'Item' not in response:
       return None
-    return self.get_team_record_attributes(response["Item"])
+    team=self.get_team_record_attributes(response["Item"])
+    if rating_v2_enabled():
+      from dao.RatingDao import RatingDao
+      state,_=RatingDao().load(guild_id,"team")
+      team.rating_v2=state.summary(team_id,int(time.time()))
+    return team
 
   def get_teams_by_guild_id(self, guild_id: str) -> list[TeamRecord]:
     response = self.table.query(
@@ -170,6 +190,15 @@ class TeamDao:
     teams = list()
     for item in response['Items']:
       teams.append(self.get_team_record_attributes(item))
+    while response.get("LastEvaluatedKey"):
+      response=self.table.query(IndexName='guild_id-index',KeyConditionExpression=Key('guild_id').eq(guild_id),
+          ExclusiveStartKey=response['LastEvaluatedKey'])
+      teams.extend(self.get_team_record_attributes(item) for item in response['Items'])
+    if rating_v2_enabled():
+      from dao.RatingDao import RatingDao
+      state,_=RatingDao().load(guild_id,"team")
+      for team in teams:
+        team.rating_v2=state.summary(team.team_id,int(time.time()))
     return teams
 
   def get_team_by_player(self, guild_id: str, player_id: str):
@@ -184,8 +213,9 @@ class TeamDao:
 
   def put_team(self, team_record: TeamRecord):
     current_version = int(team_record.version)
-    team_record.version = int(team_record.version) + 1
-    json_ = json.dumps(team_record.__dict__, cls=DecimalEncoder)
+    item={k:v for k,v in team_record.__dict__.items() if k != "rating_v2"}
+    item["version"]=current_version+1
+    json_ = json.dumps(item, cls=DecimalEncoder)
     print(f'Putting following team_record: {json_}')
     team_dict = json.loads(json_, parse_float=Decimal)
 
@@ -194,7 +224,7 @@ class TeamDao:
       if current_version != 0:
         response = self.table.put_item(Item=team_dict, ConditionExpression=Attr("version").eq(current_version))
       else:
-        response = self.table.put_item(Item=team_dict)
+        response = self.table.put_item(Item=team_dict,ConditionExpression=Attr("team_id").not_exists())
     except ClientError as err:
       if err.response["Error"]["Code"] == 'ConditionalCheckFailedException':
         print("Team updated since read, retry!")
@@ -202,6 +232,7 @@ class TeamDao:
       else:
         raise err
 
+    team_record.version=current_version+1
     print(f'Team Dao put_team response: {response}')
     return response
 

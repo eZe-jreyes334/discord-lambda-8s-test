@@ -3,6 +3,7 @@ from dao.PlayerDao import PlayerDao
 from dao.QueueDao import QueueRecord, QueueDao
 from discord_lambda import Interaction, Components
 from discord_lambda.Interaction import Embedding
+from rating import enabled as rating_v2_enabled
 
 
 queue_dao = QueueDao()
@@ -17,6 +18,9 @@ LEADERBOARD_COLOR = 0x7c3aed  # Purple
 
 def build_leaderboard_entries(guild_id: str):
     player_list = player_dao.get_players_by_guild_id(guild_id)
+    if rating_v2_enabled():
+        from core.RatingViews import leaderboard_entries
+        return leaderboard_entries(guild_id,player_list)
     sorted_player_list = sorted(player_list, key=lambda x: x.get_effective_sr(), reverse=True)
 
     entries = []
@@ -75,15 +79,19 @@ def build_leaderboard_page(guild_id: str, page: int):
             f"└─ SR: **{entry['sr']}** ({entry['delta']}) | {entry['wins']}W / {entry['losses']}L"
         )
         rows.append(row)
+        if entry.get("status"):
+            rows[-1] += f"\n  {entry['status']} | Skill {entry['mu']:.1f} ± {entry['sigma']:.1f}"
 
-    description = "\n".join(rows) if rows else "No players with 10+ games yet. Keep playing!"
+    empty = "No v2 matches completed yet. Keep playing!" if rating_v2_enabled() else "No players with 10+ games yet. Keep playing!"
+    description = "\n".join(rows) if rows else empty
 
     embed = Embedding(
         title="🏆 Season Leaderboard",
         desc=description,
         color=LEADERBOARD_COLOR,
     )
-    embed.set_footer(text=f"Page {page + 1}/{total_pages}  •  10 games required to place")
+    footer = "Skill estimate ± uncertainty • Provisional players listed separately" if rating_v2_enabled() else "10 games required to place"
+    embed.set_footer(text=f"Page {page + 1}/{total_pages} • {footer}")
 
     component = Components()
     component.add_button(

@@ -1,3 +1,9 @@
+# CoD 8s skill-rating overhaul
+
+Local implementation and evaluation: [Rating v2 design, audit, and migration](docs/RATING_V2.md), [validation results](docs/VALIDATION.md).
+
+Enable only after a reviewed new-season migration. Default operation remains legacy. Source changes do not authorize or trigger a production deployment.
+
 # Discord Lambda Py
 A template for Discord bot creation using AWS Lambda and API Gateway. This project attempts to offer similar functionality as the [`slash-create`](https://github.com/Snazzah/slash-create) JavaScript library but in a serverless, Python environment.
 

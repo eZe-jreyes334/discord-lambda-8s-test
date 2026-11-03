@@ -95,7 +95,10 @@ jobs:
             PUBLIC_KEY=${{ secrets.PUBLIC_KEY }},
             BOT_TOKEN=${{ secrets.BOT_TOKEN }},
             BOT_ENV=${{ secrets.BOT_ENV }},
-            VENMO_TOKEN=${{ secrets.VENMO_TOKEN }}
+            VENMO_TOKEN=${{ secrets.VENMO_TOKEN }},
+            RATING_SYSTEM=${{ vars.RATING_SYSTEM || 'legacy' }},
+            RATING_TABLE=${{ vars.RATING_TABLE }},
+            RATING_SEASON=${{ vars.RATING_SEASON || 'v2-1' }}
             # Add your environment variables below in the same format as above
 
 

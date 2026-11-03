@@ -20,6 +20,9 @@ class TrueSkillAccessor:
         self.env = TrueSkill(draw_probability=0, tau=0.1)
 
     def post_match(self, win_team: list, lose_team: list, guild_id: str):
+        from rating import enabled
+        if enabled():
+            raise RuntimeError("v2 results must use the atomic RatingService with a match ID")
         win_team_ratings = self.get_player_data(win_team, guild_id)
         lose_team_ratings = self.get_player_data(lose_team, guild_id)
 
@@ -46,6 +49,9 @@ class TrueSkillAccessor:
         """Rate a 4v4 premade team match. Each TEAM is treated as a single
         rated entity (one Rating per team), so the team's own elo/sigma move —
         completely separate from individual players' solo ratings."""
+        from rating import enabled
+        if enabled():
+            raise RuntimeError("v2 results must use the atomic RatingService with a match ID")
         from dao.TeamDao import TeamDao
         team_dao = TeamDao()
 

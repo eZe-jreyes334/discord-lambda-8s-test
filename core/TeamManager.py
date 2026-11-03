@@ -1,4 +1,5 @@
 from __future__ import annotations
+import uuid
 
 import itertools
 import random
@@ -10,6 +11,7 @@ from dao.TeamDao import TeamDao, TeamRecord, MAX_TEAM_SIZE, STATUS_IDLE, STATUS_
 from discord_lambda import Embedding, Components
 from discord_lambda import Interaction
 from trueskillapi import TrueSkillAccessor
+from rating import enabled as rating_v2_enabled
 
 team_dao = TeamDao()
 queue_dao = QueueDao()
@@ -51,8 +53,11 @@ def build_team_lobby_embed(team: TeamRecord) -> Embedding:
         roster += "• *(empty)*\n"
 
     ranked = ""
-    if team.is_ranked():
-        ranked = f"\n{team.get_rank_emoji()} SR **{int(team.team_sr)}** • {team.tmw}W / {team.tml}L"
+    if hasattr(team, 'rating_v2'):
+        view=team.rating_v2
+        ranked = f"\n{team.get_rank_emoji()} SR **{view['sr']}** • {view['wins']}W / {view['losses']}L\n{view['status']}"
+    elif team.is_ranked():
+        ranked = f"\n{team.get_rank_emoji()} SR **{int(team.get_effective_sr())}** • {team.tmw}W / {team.tml}L"
     else:
         played = team.tmw + team.tml
         ranked = f"\n{team.get_rank_emoji()} Unranked • {played}/10 placement games"
@@ -76,7 +81,7 @@ def build_team_pool_embed(guild_id: str, queue_id: str):
     else:
         rows = []
         for t in queued:
-            sr = f"SR {int(t.team_sr)}" if t.is_ranked() else "Unranked"
+            sr = f"SR {int(t.get_effective_sr())}" if t.is_ranked() else getattr(t,'rating_v2',{}).get('status','Unranked')
             rows.append(f"{t.get_rank_emoji()} **{t.team_name}** — {sr} • {len(t.players)}/{MAX_TEAM_SIZE}")
         desc = f"{len(queued)} team(s) searching:\n\n" + "\n".join(rows)
 
@@ -244,7 +249,7 @@ def start_team_match(inter: Interaction) -> None:
                             ephemeral=True)
         return
 
-    match_queue_id = TEAM_MATCH_PREFIX + team_a.team_id[:8]
+    match_queue_id = TEAM_MATCH_PREFIX + uuid.uuid4().hex[:16]
     maps = random.sample(base.map_set, min(3, len(base.map_set)))
 
     record = QueueRecord(
@@ -260,12 +265,9 @@ def start_team_match(inter: Interaction) -> None:
     )
     record.update_expiry_date()
     assign_map_hosts(record)
-    queue_dao.put_queue(record)
-
-    team_a.status = STATUS_IN_MATCH
-    team_b.status = STATUS_IN_MATCH
-    team_dao.put_team(team_a)
-    team_dao.put_team(team_b)
+    if not reserve_match(record,team_a,team_b):
+        inter.send_response(embeds=[_error("Teams changed","Please try starting the match again.")],ephemeral=True)
+        return
 
     embeds, components = QueueManager.update_queue_embed(record)
     resp = inter.send_response(embeds=embeds, components=components, ephemeral=False)
@@ -281,6 +283,44 @@ def start_team_match(inter: Interaction) -> None:
 # ---------------------------------------------------------------------------
 # Match completion (called from QueueManager's vote handlers)
 # ---------------------------------------------------------------------------
+
+
+def reserve_match(record,team_a,team_b):
+    """Create the lobby and reserve both rosters in one v2 transaction."""
+    if not rating_v2_enabled():
+        if queue_dao.put_queue(record) is None:
+            return False
+        for team in (team_a,team_b):
+            team.status=STATUS_IN_MATCH
+            team_dao.put_team(team)
+        return True
+    from dao.RatingDao import RatingDao
+    from dao.QueueDao import table_name as queue_table
+    from dao.TeamDao import table_name as team_table
+    from botocore.exceptions import ClientError
+    store=RatingDao()
+    if set(team_a.players)&set(team_b.players) or not team_a.is_full() or not team_b.is_full():
+        raise ValueError("Premade teams need disjoint four-player rosters")
+    record.match_id=str(uuid.uuid4())
+    record.version=1
+    writes=[{"Put":{"TableName":queue_table,"Item":store._encode(record.__dict__),
+                    "ConditionExpression":"attribute_not_exists(queue_id)"}}]
+    for team in (team_a,team_b):
+        writes.append({"Update":{"TableName":team_table,
+            "Key":store._encode(dict(guild_id=team.guild_id,team_id=team.team_id)),
+            "ConditionExpression":"#v = :v AND #s = :queued",
+            "UpdateExpression":"SET #s = :playing, #v = :next",
+            "ExpressionAttributeNames":{"#v":"version","#s":"status"},
+            "ExpressionAttributeValues":store._encode({":v":team.version,":queued":STATUS_QUEUED,
+                ":playing":STATUS_IN_MATCH,":next":team.version+1})}})
+    try:
+        store.client.transact_write_items(TransactItems=writes)
+    except ClientError as exc:
+        if exc.response['Error']['Code']=='TransactionCanceledException':
+            record.version=0
+            return False
+        raise
+    return True
 
 def complete_team_match(guild_id: str, win_team_id: str, lose_team_id: str) -> None:
     """Return both teams to idle so they can re-queue. Ratings are updated
@@ -303,7 +343,7 @@ def cancel_team_match(guild_id: str, team_1_id: str, team_2_id: str) -> None:
 
 
 def _team_block(team: TeamRecord, color_dot: str) -> str:
-    block = f"{color_dot} **{team.team_name}** {team.get_rank_emoji()} SR {int(team.team_sr)} ({team.team_delta})\n"
+    block = f"{color_dot} **{team.team_name}** {team.get_rank_emoji()} SR {int(team.get_effective_sr())} ({team.get_public_delta()})\n"
     for player_id in team.players:
         block += f"• {_mention(player_id)}\n"
     return block

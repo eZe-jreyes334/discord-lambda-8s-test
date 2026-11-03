@@ -6,3 +6,8 @@ __pycache__/
 dist/
 build/
 .env
+*.log
+*.checkpoint.jsonl
+docs/benchmark-development.json
+docs/benchmark-evaluation.json
+docs/stress-results.json

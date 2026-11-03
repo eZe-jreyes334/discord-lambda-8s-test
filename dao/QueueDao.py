@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -19,7 +20,7 @@ class QueueRecord:
       team_1_channel_id: str, team_2_channel_id: str, message_id: str = None, channel_id: str = None, channel_config: dict = None, waitlist: list = None,
       is_team_queue: bool = False, team_1_id: str = None, team_2_id: str = None,
       is_bracket: bool = False, tournament_id: str = None, bracket_match_id: str = None, bracket: dict = None,
-      map_hosts: list = None):
+      map_hosts: list = None, match_id: str = None, rating_result: str = None, draft_mode: str = None):
     self.guild_id = guild_id
     self.queue_id = queue_id
     self.team_1 = team_1
@@ -57,9 +58,15 @@ class QueueRecord:
     self.tournament_id = tournament_id
     self.bracket_match_id = bracket_match_id
     self.bracket = bracket
+    self.match_id = match_id
+    self.rating_result = rating_result
+    self.draft_mode = draft_mode
 
 
   def clear_queue(self, reset_expiry: bool = True):
+    self.match_id = None
+    self.rating_result = None
+    self.draft_mode = None
     self.team_1 = list()
     self.team_2 = list()
     self.queue = list()
@@ -87,9 +94,8 @@ class QueueDao:
     self.table = dynamodb.Table(table_name)
 
   def get_queue(self, guild_id: str, queue_id: str = "1"):
-    if guild_id != "1123491132765110302":
-      guild_id = "1123491132765110302"
     response = self.table.get_item(
+      ConsistentRead=True,
       Key={
         'guild_id': guild_id,
         'queue_id': queue_id,
@@ -102,9 +108,8 @@ class QueueDao:
   def get_queue_or_none(self, guild_id: str, queue_id: str):
     """Like get_queue, but returns None instead of raising when the record
     does not exist yet (used by team matches that create their record fresh)."""
-    if guild_id != "1123491132765110302":
-      guild_id = "1123491132765110302"
     response = self.table.get_item(
+      ConsistentRead=True,
       Key={
         'guild_id': guild_id,
         'queue_id': queue_id,
@@ -116,8 +121,11 @@ class QueueDao:
 
   def put_queue(self, queue_record: QueueRecord):
     current_version = queue_record.version
-    queue_record.version = queue_record.version + 1
-    json_ = json.dumps(queue_record.__dict__, default=set_default)
+    # Persist identity before any result can be voted on; retries reuse this ID.
+    if not queue_record.match_id and queue_record.team_1 and queue_record.team_2:
+      queue_record.match_id = str(uuid.uuid4())
+    item = dict(queue_record.__dict__, version=current_version + 1)
+    json_ = json.dumps(item, default=set_default)
     print(f'Putting following queue_record: {json_}')
     queue_dict = json.loads(json_, parse_float=Decimal)
 
@@ -126,9 +134,8 @@ class QueueDao:
       if current_version != 0:
         response = self.table.put_item(Item=queue_dict, ConditionExpression=Attr("version").eq(current_version))
       else:
-        # Brand new record (e.g. a freshly created team match) — no prior
-        # version to guard against, so write unconditionally.
-        response = self.table.put_item(Item=queue_dict)
+        response = self.table.put_item(Item=queue_dict,
+            ConditionExpression=Attr("queue_id").not_exists())
     except ClientError as err:
       if err.response["Error"]["Code"] == 'ConditionalCheckFailedException':
         # Somebody changed the item in the db while we were changing it!
@@ -137,6 +144,7 @@ class QueueDao:
       else:
         raise err
 
+    queue_record.version = current_version + 1
     print(f'Queue Dao put_queue response: {response}')
     return response
 
@@ -199,15 +207,19 @@ class QueueDao:
                        version=response["version"], message_id=response["message_id"], channel_id=response["channel_id"], channel_config=response["channel_config"],
                        waitlist=waitlist,
                        is_team_queue=is_team_queue, team_1_id=team_1_id, team_2_id=team_2_id,
-                       is_bracket=is_bracket, tournament_id=tournament_id, bracket_match_id=bracket_match_id, bracket=bracket)
+                       is_bracket=is_bracket, tournament_id=tournament_id, bracket_match_id=bracket_match_id, bracket=bracket,
+                       match_id=response.get("match_id"),rating_result=response.get("rating_result"),draft_mode=response.get("draft_mode"))
 
   def get_queues_by_prefix(self, guild_id: str, prefix: str):
     """Return all queue records whose queue_id starts with prefix. Used to
     enumerate every per-match record of a bracket tournament in one query."""
     from boto3.dynamodb.conditions import Key
-    if guild_id != "1123491132765110302":
-      guild_id = "1123491132765110302"
     response = self.table.query(
       KeyConditionExpression=Key("guild_id").eq(guild_id) & Key("queue_id").begins_with(prefix)
     )
-    return [self.get_queue_record_attributes(item) for item in response.get("Items", [])]
+    records=[self.get_queue_record_attributes(item) for item in response.get("Items", [])]
+    while response.get('LastEvaluatedKey'):
+      response=self.table.query(KeyConditionExpression=Key('guild_id').eq(guild_id) & Key('queue_id').begins_with(prefix),
+          ExclusiveStartKey=response['LastEvaluatedKey'])
+      records.extend(self.get_queue_record_attributes(item) for item in response.get('Items',[]))
+    return records

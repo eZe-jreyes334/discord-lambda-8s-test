@@ -1,5 +1,21 @@
 # CLAUDE.md
 
+## Current rating work
+
+See `docs/RATING_V2.md` for the audited rating architecture, assumptions, and
+migration/rollback procedure. v2 is opt-in and requires a dedicated table; the
+old setup examples below describe the legacy bot. Do not deploy or push changes
+unless the user authorizes it. Local verification is supported:
+
+```bash
+python -m pip install -r requirements-testing.txt
+python -m pytest tests -q
+python -m pytest tests_rating -q
+```
+
+Run these suites separately because the legacy conftest globally mocks libraries.
+Rating experiments use `python -m tools.benchmark_ratings` and never require AWS.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview

@@ -102,6 +102,7 @@ def test_start_match_saves_hosts_before_displaying_maps(
     record = queue_record_waiting
     players = [f"p{i}" for i in range(8)]
     record.queue = players.copy()
+    mock_interaction.user_id = players[0]
     dao = mocker.patch.object(QueueManager, "queue_dao")
     dao.get_queue.return_value = record
     saved = []
