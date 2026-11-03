@@ -31,7 +31,7 @@ The goal is for the 8s leaderboard to reflect estimated skill in a small group o
 
 ## Validation
 
-- Before this default-system change, **230 local tests passed:** 176 historical/upstream tests and 54 real-math/storage tests. This change adds 10 default/configuration checks; GitHub Actions validates the revised suites on Python 3.9 and 3.12. The production suite runs without a mode flag.
+- **240 tests passed on both Python 3.9 and 3.12 in [GitHub Actions](https://github.com/eZe-jreyes334/discord-lambda-8s-test/actions/runs/41693948786):** 176 historical/upstream reference tests and 64 production-default tests using real rating math, emulated DynamoDB, and configuration checks. The production suite runs without a mode flag. No tests failed or were skipped.
 - Compare legacy behavior, default TrueSkill, OpenSkill variants, and joint-model settings across **3,456 held-out model/scenario runs**.
 - In **300 targeted simulations**, a strong player with 25 games ranked above an average player with 200 games every time. Ten forced wins remained provisional.
 - The selected model had approximately **1.8% lower log loss** than default TrueSkill on the held-out synthetic set. It did not win every scenario, and its uncertainty intervals were conservative.
@@ -41,7 +41,7 @@ The goal is for the 8s leaderboard to reflect estimated skill in a small group o
 
 **This replaces the SR system entirely. Deploying the release uses the new model; legacy is not an available production mode.** Existing legacy values remain archived, but they do not determine the new leaderboard.
 
-Before deployment, provision the dedicated DynamoDB rating table and permissions, finish/cancel active lobbies, and set `RATING_TABLE` and `RATING_SEASON` in the DEV/PROD GitHub environment. Both workflows check that the table is ACTIVE with the required String keys before changing Lambda. Source deployment waits for dependencies. Missing configuration fails clearly instead of falling back to the old system.
+Before deployment, provision the dedicated DynamoDB rating table and permissions, finish/cancel active lobbies, and set `RATING_TABLE` and `RATING_SEASON` in the DEV/PROD GitHub environment. Both workflows check that the table is ACTIVE with the required String keys before changing Lambda. Source deployment waits for dependencies. Missing configuration fails clearly instead of falling back to the old system. Merging to master triggers the existing production workflow, so storage and IAM must be prepared first. The deployment identity needs `dynamodb:DescribeTable` for the check; the runtime role needs the permissions documented in the migration guide.
 
 Without trustworthy history, the new season starts from the same prior for everyone. The offline replay tool can produce a reviewed snapshot and receipt bundle from chronological outcomes; existing SR alone cannot reconstruct that history. Rollback requires restoring the previous application release and configuration. Old values remain available, but new-system results are not automatically backfilled into them.
 

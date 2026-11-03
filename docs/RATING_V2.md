@@ -197,7 +197,8 @@ deliberate loss trading from genuine surprise wins using outcomes alone.
    `UpdateItem` alongside existing read permissions. AWS authorizes transactional
    operations through these underlying actions, not a `TransactWriteItems` IAM
    action. Scope permissions to the actual table ARNs. Existing leaderboard
-   queries and other bot permissions still apply.
+   queries and other bot permissions still apply. The deployment identity also
+   needs `dynamodb:DescribeTable` on the rating table for the pre-deployment check.
 4. Set `RATING_TABLE=<dedicated table>` and a reviewed
    `RATING_SEASON` such as `v2-1` as GitHub environment variables in DEV/PROD.
    Both Lambda workflows now pass these variables into their explicit environment
@@ -271,8 +272,10 @@ inside its test process; it does not enable a production legacy mode. Combining
 suites would contaminate the real-library tests. The production-default suite runs
 without `RATING_SYSTEM` and uses real boto3 with Moto, fake AWS credentials,
 real TrueSkill for one-step moment equivalence, and NumPy only for a covariance
-eigenvalue check. CI is configured for Python 3.9 and 3.12; local execution used
-Python 3.12.14, with a Python 3.9 syntax parse check. The revised branch is configured to run both CI jobs on push.
+eigenvalue check. [GitHub Actions](https://github.com/eZe-jreyes334/discord-lambda-8s-test/actions/runs/41693948786)
+passed all 240 tests (176 historical/reference and 64 production-default) on
+Python 3.9.25 and 3.12.15 at commit `0f59e6f`. Earlier local execution used
+Python 3.12.14, with a Python 3.9 syntax parse check.
 OpenSkill is an evaluation-only dependency requiring Python 3.10+; it is excluded
 from Lambda dependencies and from the Python 3.9 test dependency set.
 

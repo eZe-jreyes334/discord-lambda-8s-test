@@ -1,6 +1,14 @@
 # Pre-Queue Feature Tests
 
-Comprehensive test suite for the pre-queue (waiting room) feature.
+Historical reference/regression tests for the pre-queue (waiting room) feature and other inherited behavior. This suite mocks libraries and selects historical paths inside its test harness. Those paths cannot be selected as a production rating mode.
+
+The production rating system is covered by `tests_rating/`, which uses the required skill model without an opt-in flag. Run the suites in separate Python processes:
+
+```bash
+python -m pip install -r requirements-testing.txt
+python -m pytest tests/ -q
+python -m pytest tests_rating/ -q
+```
 
 ## Test Files
 
@@ -116,7 +124,7 @@ End-to-end integration and state machine tests:
 pip install pytest pytest-mock
 ```
 
-### Run all tests
+### Run historical/reference tests
 ```bash
 pytest tests/ -v
 ```

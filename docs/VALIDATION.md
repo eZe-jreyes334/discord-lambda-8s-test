@@ -1,7 +1,7 @@
 # Validation record: CoD 8s rating overhaul
 
 Recorded November 3, 2026. Source fork snapshot: `8715e2c8af661cc6469f3343a186b01a8b2c93a4`.
-The simulation evidence and baseline checks below were completed locally before repository publication. The default-system revision adds 10 checks and is configured for GitHub Actions verification on Python 3.9 and 3.12. No production data was read or live Discord/AWS calls made during the tests.
+The simulation evidence and baseline checks below were completed locally before repository publication. The default-system revision added 10 checks and passed all 240 tests on both Python 3.9 and 3.12 in GitHub Actions. No production data was read or live Discord/AWS calls made during the tests.
 
 ## Result and interpretation
 
@@ -93,15 +93,15 @@ The strong occasional player qualifies and ranks above the average grinder in **
 | Check | Result |
 |---|---|
 | Untouched fork baseline tests | 157 passed |
-| Historical/regression baseline, including upstream #84/#85 | 176 passed locally before the default-system revision |
-| Real-math and emulated-transaction baseline | 54 passed locally before the default-system revision |
-| Python 3.9 syntax parse | 28 files passed |
+| Historical/upstream reference suite, including #84/#85 | 176 passed on Python 3.9.25 and 3.12.15 |
+| Production-default real-math, emulated-transaction and configuration suite | 64 passed on Python 3.9.25 and 3.12.15 |
+| Earlier local Python 3.9 syntax parse | 28 files passed before the default-system revision |
 | Optimized rank calculation versus reference | 500 tied/random cases matched |
-| Git whitespace/error check | Passed |
-| Revised suites on GitHub Actions | Pending this revision's push run |
+| Earlier local Git whitespace/error check | Passed before the default-system revision |
+| Revised suites on GitHub Actions | [Passed](https://github.com/eZe-jreyes334/discord-lambda-8s-test/actions/runs/41693948786) at commit `0f59e6f`; 240 tests per Python version |
 | Real Lambda / real Discord | Not run |
 
-Local runtime: Python 3.12.14. The new suite uses real TrueSkill, boto3 and Moto with fake credentials; it does not connect to live AWS. The inherited historical suite globally replaces libraries and selects historical reference paths inside its test harness; it is not a production mode. The production-default suite runs without RATING_SYSTEM, in a separate Python process. Dependency deprecation warnings remain (primarily botocore's utcnow calls); no test failed or was skipped. CI is configured for Python 3.9 and 3.12, but local syntax parsing is not a substitute for running the Python 3.9 CI job.
+Local runtime: Python 3.12.14. The new suite uses real TrueSkill, boto3 and Moto with fake credentials; it does not connect to live AWS. The inherited historical suite globally replaces libraries and selects historical reference paths inside its test harness; it is not a production mode. The production-default suite runs without RATING_SYSTEM, in a separate Python process. Dependency deprecation warnings remain (primarily botocore's utcnow calls); no test failed or was skipped. GitHub Actions executed both suites on Python 3.9.25 and 3.12.15. The production-default checks verify activation without an opt-in flag, rejection of legacy/unknown settings, failure without rating storage, and acceptance/rejection of deployment table schemas.
 
 Coverage includes one-step equivalence to TrueSkill moments, fixed-teammate uncertainty, covariance positivity, extreme upsets, opponent-strength sensitivity, no read-time decay or game-count bonus, provisional/qualification behavior, rank boundaries, result replay, stale buttons, invalid/duplicate rosters, opposite outcomes, concurrent snapshot/queue updates, lost responses, guild isolation, immutable legacy rating fields, premade reservations/cancellation, separate team ratings, participant-only bracket recovery, failed Discord delivery, pagination, and displayed v2 stats.
 
